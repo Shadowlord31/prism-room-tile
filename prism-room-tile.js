@@ -20,6 +20,7 @@ class PrismRoomTile extends HTMLElement {
       accent_color: "#60a5fa",
       navigation_path: "",
       corner_entities: [],
+      info_entities: [],
       entities: []
     };
   }
@@ -118,7 +119,7 @@ class PrismRoomTile extends HTMLElement {
         .prism-status { font-size:12px; color: rgba(255,255,255,0.55); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .prism-info-row { display:flex; gap:12px; margin-bottom:10px; flex-wrap:wrap; position:relative; z-index:1; }
         .prism-info-chip { display:flex; align-items:center; gap:4px; font-size:11px; color: rgba(255,255,255,0.6); }
-        .prism-info-chip ha-icon { --mdc-icon-size:14px; }
+        .prism-info-chip ha-icon { --mdc-icon-size:14px; color: var(--chip-color, rgba(255,255,255,0.6)); }
         .prism-divider { height:1px; background: rgba(255,255,255,0.09); margin: 8px 0 10px; }
         .prism-entities { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; position:relative; z-index:1; }
         .prism-entity-btn {
@@ -177,6 +178,7 @@ class PrismRoomTile extends HTMLElement {
       const chip = document.createElement("div");
       chip.className = "prism-info-chip";
       chip.dataset.entity = info.entity;
+      if (info.color) chip.style.setProperty("--chip-color", info.color);
       chip.innerHTML = `<ha-icon icon="${info.icon || "mdi:information"}"></ha-icon><span></span>`;
       infoRow.appendChild(chip);
     });
@@ -279,7 +281,6 @@ class PrismRoomTileEditor extends HTMLElement {
     return [
       { name: "room_name", selector: { text: {} } },
       { name: "icon", selector: { icon: {} } },
-      { name: "accent_color", selector: { text: {} } },
       { name: "entity", selector: { entity: {} } },
       { name: "navigation_path", selector: { text: {} } },
       { name: "temperature_entity", selector: { entity: { domain: "sensor" } } }
@@ -290,7 +291,6 @@ class PrismRoomTileEditor extends HTMLElement {
     const map = {
       room_name: "Raumname",
       icon: "Icon",
-      accent_color: "Akzentfarbe (hex)",
       entity: "Haupt-Entity (f\u00fcr Glow, z.B. \"in Benutzung\")",
       navigation_path: "Navigations-Pfad",
       temperature_entity: "Temperatur-Entity"
@@ -307,6 +307,16 @@ class PrismRoomTileEditor extends HTMLElement {
     wrapper.style.flexDirection = "column";
     wrapper.style.gap = "16px";
     wrapper.style.padding = "8px 0";
+
+    // Accent color as a dedicated color-picker row (not part of ha-form)
+    wrapper.appendChild(this._colorPickerRow(
+      "Akzentfarbe",
+      this._config.accent_color || "#60a5fa",
+      (hex) => {
+        this._config = { ...this._config, accent_color: hex };
+        this._fireChanged();
+      }
+    ));
 
     const form = document.createElement("ha-form");
     form.hass = this._hass;
@@ -325,11 +335,63 @@ class PrismRoomTileEditor extends HTMLElement {
       "Ecken-Icons (oben rechts, z.B. Fenster/Pr\u00e4senz)"
     ));
     wrapper.appendChild(this._renderListEditor(
+      "info_entities",
+      "Info-Chips (zus\u00e4tzliche Werte, z.B. Verbrauch)"
+    ));
+    wrapper.appendChild(this._renderListEditor(
       "entities",
       "Quick-Toggle-Icons (unten, mittig)"
     ));
 
     this.appendChild(wrapper);
+  }
+
+  // Compact native color picker (swatch) + hex text field, kept in sync.
+  _colorPickerRow(labelText, value, onChange) {
+    const row = document.createElement("div");
+    row.style.display = "flex";
+    row.style.alignItems = "center";
+    row.style.gap = "10px";
+
+    const label = document.createElement("div");
+    label.textContent = labelText;
+    label.style.flex = "1";
+    label.style.fontSize = "14px";
+    row.appendChild(label);
+
+    const swatch = document.createElement("input");
+    swatch.type = "color";
+    swatch.value = this._toHex(value);
+    swatch.style.width = "36px";
+    swatch.style.height = "36px";
+    swatch.style.border = "none";
+    swatch.style.borderRadius = "8px";
+    swatch.style.cursor = "pointer";
+    swatch.style.background = "none";
+    swatch.style.padding = "0";
+
+    const text = document.createElement("ha-textfield");
+    text.value = value || "";
+    text.style.width = "110px";
+
+    swatch.addEventListener("input", () => {
+      text.value = swatch.value;
+      onChange(swatch.value);
+    });
+    text.addEventListener("change", (ev) => {
+      const v = ev.target.value;
+      swatch.value = this._toHex(v);
+      onChange(v);
+    });
+
+    row.appendChild(swatch);
+    row.appendChild(text);
+    return row;
+  }
+
+  _toHex(value) {
+    if (value && /^#[0-9a-fA-F]{6}$/.test(value)) return value;
+    return "#60a5fa";
   }
 
   _renderListEditor(key, title) {
@@ -353,7 +415,7 @@ class PrismRoomTileEditor extends HTMLElement {
     const addBtn = document.createElement("mwc-button");
     addBtn.textContent = "+ Hinzuf\u00fcgen";
     addBtn.addEventListener("click", () => {
-      const updated = [...(this._config[key] || []), { entity: "", icon: "mdi:help-circle" }];
+      const updated = [...(this._config[key] || []), { entity: "", icon: "mdi:help-circle", color: "#60a5fa" }];
       this._config = { ...this._config, [key]: updated };
       this._fireChanged();
       this._render();
@@ -391,18 +453,16 @@ class PrismRoomTileEditor extends HTMLElement {
     });
     row.appendChild(iconInput);
 
-    const colorInput = document.createElement("ha-textfield");
-    colorInput.label = "Farbe";
-    colorInput.value = item.color || "";
-    colorInput.style.flex = "1";
-    colorInput.style.minWidth = "100px";
-    colorInput.addEventListener("change", (ev) => {
-      this._updateListItem(key, index, { color: ev.target.value });
-    });
-    row.appendChild(colorInput);
+    const colorPicker = this._colorPickerRow(
+      "",
+      item.color || "#60a5fa",
+      (hex) => this._updateListItem(key, index, { color: hex })
+    );
+    colorPicker.style.flex = "0 0 auto";
+    colorPicker.querySelector("div").style.display = "none";
+    row.appendChild(colorPicker);
 
     const delBtn = document.createElement("ha-icon-button");
-    delBtn.innerHTML = "";
     const delIcon = document.createElement("ha-icon");
     delIcon.icon = "mdi:delete";
     delBtn.appendChild(delIcon);
@@ -426,7 +486,6 @@ class PrismRoomTileEditor extends HTMLElement {
 }
 
 customElements.define("prism-room-tile-editor", PrismRoomTileEditor);
-
 customElements.define("prism-room-tile", PrismRoomTile);
 
 window.customCards = window.customCards || [];
