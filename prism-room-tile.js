@@ -9,6 +9,21 @@ class PrismRoomTile extends HTMLElement {
 
   getCardSize() { return 3; }
 
+  static getConfigElement() {
+    return document.createElement("prism-room-tile-editor");
+  }
+
+  static getStubConfig() {
+    return {
+      room_name: "Neuer Raum",
+      icon: "mdi:home",
+      accent_color: "#60a5fa",
+      navigation_path: "",
+      corner_entities: [],
+      entities: []
+    };
+  }
+
   set hass(hass) {
     this._hass = hass;
     if (!this._built) {
@@ -237,7 +252,183 @@ class PrismRoomTile extends HTMLElement {
   }
 }
 
+class PrismRoomTileEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = { ...config };
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (this._form) this._form.hass = hass;
+    this.querySelectorAll("ha-entity-picker").forEach((p) => { p.hass = hass; });
+  }
+
+  connectedCallback() {
+    this._render();
+  }
+
+  _fireChanged() {
+    this.dispatchEvent(new CustomEvent("config-changed", {
+      detail: { config: this._config },
+      bubbles: true, composed: true
+    }));
+  }
+
+  _schema() {
+    return [
+      { name: "room_name", selector: { text: {} } },
+      { name: "icon", selector: { icon: {} } },
+      { name: "accent_color", selector: { text: {} } },
+      { name: "entity", selector: { entity: {} } },
+      { name: "navigation_path", selector: { text: {} } },
+      { name: "temperature_entity", selector: { entity: { domain: "sensor" } } }
+    ];
+  }
+
+  _labels(schemaName) {
+    const map = {
+      room_name: "Raumname",
+      icon: "Icon",
+      accent_color: "Akzentfarbe (hex)",
+      entity: "Haupt-Entity (f\u00fcr Glow, z.B. \"in Benutzung\")",
+      navigation_path: "Navigations-Pfad",
+      temperature_entity: "Temperatur-Entity"
+    };
+    return map[schemaName] || schemaName;
+  }
+
+  _render() {
+    if (!this._config) return;
+    this.innerHTML = "";
+
+    const wrapper = document.createElement("div");
+    wrapper.style.display = "flex";
+    wrapper.style.flexDirection = "column";
+    wrapper.style.gap = "16px";
+    wrapper.style.padding = "8px 0";
+
+    const form = document.createElement("ha-form");
+    form.hass = this._hass;
+    form.data = this._config;
+    form.schema = this._schema();
+    form.computeLabel = (s) => this._labels(s.name);
+    form.addEventListener("value-changed", (ev) => {
+      this._config = { ...this._config, ...ev.detail.value };
+      this._fireChanged();
+    });
+    this._form = form;
+    wrapper.appendChild(form);
+
+    wrapper.appendChild(this._renderListEditor(
+      "corner_entities",
+      "Ecken-Icons (oben rechts, z.B. Fenster/Pr\u00e4senz)"
+    ));
+    wrapper.appendChild(this._renderListEditor(
+      "entities",
+      "Quick-Toggle-Icons (unten, mittig)"
+    ));
+
+    this.appendChild(wrapper);
+  }
+
+  _renderListEditor(key, title) {
+    const section = document.createElement("div");
+    section.style.border = "1px solid var(--divider-color, #444)";
+    section.style.borderRadius = "8px";
+    section.style.padding = "12px";
+
+    const heading = document.createElement("div");
+    heading.textContent = title;
+    heading.style.fontWeight = "600";
+    heading.style.marginBottom = "8px";
+    section.appendChild(heading);
+
+    const list = this._config[key] || [];
+
+    list.forEach((item, index) => {
+      section.appendChild(this._renderRow(key, index, item));
+    });
+
+    const addBtn = document.createElement("mwc-button");
+    addBtn.textContent = "+ Hinzuf\u00fcgen";
+    addBtn.addEventListener("click", () => {
+      const updated = [...(this._config[key] || []), { entity: "", icon: "mdi:help-circle" }];
+      this._config = { ...this._config, [key]: updated };
+      this._fireChanged();
+      this._render();
+    });
+    section.appendChild(addBtn);
+
+    return section;
+  }
+
+  _renderRow(key, index, item) {
+    const row = document.createElement("div");
+    row.style.display = "flex";
+    row.style.gap = "8px";
+    row.style.alignItems = "center";
+    row.style.marginBottom = "8px";
+    row.style.flexWrap = "wrap";
+
+    const entityPicker = document.createElement("ha-entity-picker");
+    entityPicker.hass = this._hass;
+    entityPicker.value = item.entity || "";
+    entityPicker.style.flex = "2";
+    entityPicker.style.minWidth = "180px";
+    entityPicker.addEventListener("value-changed", (ev) => {
+      this._updateListItem(key, index, { entity: ev.detail.value });
+    });
+    row.appendChild(entityPicker);
+
+    const iconInput = document.createElement("ha-icon-picker");
+    iconInput.hass = this._hass;
+    iconInput.value = item.icon || "";
+    iconInput.style.flex = "1";
+    iconInput.style.minWidth = "140px";
+    iconInput.addEventListener("value-changed", (ev) => {
+      this._updateListItem(key, index, { icon: ev.detail.value });
+    });
+    row.appendChild(iconInput);
+
+    const colorInput = document.createElement("ha-textfield");
+    colorInput.label = "Farbe";
+    colorInput.value = item.color || "";
+    colorInput.style.flex = "1";
+    colorInput.style.minWidth = "100px";
+    colorInput.addEventListener("change", (ev) => {
+      this._updateListItem(key, index, { color: ev.target.value });
+    });
+    row.appendChild(colorInput);
+
+    const delBtn = document.createElement("ha-icon-button");
+    delBtn.innerHTML = "";
+    const delIcon = document.createElement("ha-icon");
+    delIcon.icon = "mdi:delete";
+    delBtn.appendChild(delIcon);
+    delBtn.addEventListener("click", () => {
+      const updated = (this._config[key] || []).filter((_, i) => i !== index);
+      this._config = { ...this._config, [key]: updated };
+      this._fireChanged();
+      this._render();
+    });
+    row.appendChild(delBtn);
+
+    return row;
+  }
+
+  _updateListItem(key, index, patch) {
+    const updated = [...(this._config[key] || [])];
+    updated[index] = { ...updated[index], ...patch };
+    this._config = { ...this._config, [key]: updated };
+    this._fireChanged();
+  }
+}
+
+customElements.define("prism-room-tile-editor", PrismRoomTileEditor);
+
 customElements.define("prism-room-tile", PrismRoomTile);
+
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "prism-room-tile",
