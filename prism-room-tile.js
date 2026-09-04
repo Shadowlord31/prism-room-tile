@@ -263,11 +263,18 @@ class PrismRoomTileEditor extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     if (this._form) this._form.hass = hass;
-    this.querySelectorAll("ha-entity-picker").forEach((p) => { p.hass = hass; });
+    if (this._activeDialog) this._activeDialog.hass = hass;
   }
 
   connectedCallback() {
     this._render();
+  }
+
+  disconnectedCallback() {
+    if (this._activeDialog) {
+      this._activeDialog.remove();
+      this._activeDialog = null;
+    }
   }
 
   _fireChanged() {
@@ -298,6 +305,12 @@ class PrismRoomTileEditor extends HTMLElement {
     return map[schemaName] || schemaName;
   }
 
+  _entityName(entityId) {
+    if (!entityId) return "(keine Entity)";
+    const state = this._hass && this._hass.states[entityId];
+    return (state && state.attributes.friendly_name) || entityId;
+  }
+
   _render() {
     if (!this._config) return;
     this.innerHTML = "";
@@ -308,7 +321,6 @@ class PrismRoomTileEditor extends HTMLElement {
     wrapper.style.gap = "16px";
     wrapper.style.padding = "8px 0";
 
-    // Accent color as a dedicated color-picker row (not part of ha-form)
     wrapper.appendChild(this._colorPickerRow(
       "Akzentfarbe",
       this._config.accent_color || "#60a5fa",
@@ -346,18 +358,19 @@ class PrismRoomTileEditor extends HTMLElement {
     this.appendChild(wrapper);
   }
 
-  // Compact native color picker (swatch) + hex text field, kept in sync.
   _colorPickerRow(labelText, value, onChange) {
     const row = document.createElement("div");
     row.style.display = "flex";
     row.style.alignItems = "center";
     row.style.gap = "10px";
 
-    const label = document.createElement("div");
-    label.textContent = labelText;
-    label.style.flex = "1";
-    label.style.fontSize = "14px";
-    row.appendChild(label);
+    if (labelText) {
+      const label = document.createElement("div");
+      label.textContent = labelText;
+      label.style.flex = "1";
+      label.style.fontSize = "14px";
+      row.appendChild(label);
+    }
 
     const swatch = document.createElement("input");
     swatch.type = "color";
@@ -369,6 +382,7 @@ class PrismRoomTileEditor extends HTMLElement {
     swatch.style.cursor = "pointer";
     swatch.style.background = "none";
     swatch.style.padding = "0";
+    swatch.style.flexShrink = "0";
 
     const text = document.createElement("ha-textfield");
     text.value = value || "";
@@ -394,6 +408,9 @@ class PrismRoomTileEditor extends HTMLElement {
     return "#60a5fa";
   }
 
+  // Compact list: one summary row per item (icon + name), click opens an
+  // ha-dialog popup to edit that single item -- matches the pattern used
+  // by other HA cards (e.g. entities/area card row editors).
   _renderListEditor(key, title) {
     const section = document.createElement("div");
     section.style.border = "1px solid var(--divider-color, #444)";
@@ -407,10 +424,16 @@ class PrismRoomTileEditor extends HTMLElement {
     section.appendChild(heading);
 
     const list = this._config[key] || [];
+    const listEl = document.createElement("div");
+    listEl.style.display = "flex";
+    listEl.style.flexDirection = "column";
+    listEl.style.gap = "4px";
+    listEl.style.marginBottom = "8px";
 
     list.forEach((item, index) => {
-      section.appendChild(this._renderRow(key, index, item));
+      listEl.appendChild(this._renderSummaryRow(key, index, item));
     });
+    section.appendChild(listEl);
 
     const addBtn = document.createElement("mwc-button");
     addBtn.textContent = "+ Hinzuf\u00fcgen";
@@ -419,62 +442,126 @@ class PrismRoomTileEditor extends HTMLElement {
       this._config = { ...this._config, [key]: updated };
       this._fireChanged();
       this._render();
+      this._openItemDialog(key, updated.length - 1, title);
     });
     section.appendChild(addBtn);
 
     return section;
   }
 
-  _renderRow(key, index, item) {
+  _renderSummaryRow(key, index, item) {
     const row = document.createElement("div");
     row.style.display = "flex";
-    row.style.gap = "8px";
     row.style.alignItems = "center";
-    row.style.marginBottom = "8px";
-    row.style.flexWrap = "wrap";
+    row.style.gap = "10px";
+    row.style.padding = "8px 10px";
+    row.style.borderRadius = "8px";
+    row.style.background = "var(--secondary-background-color, rgba(255,255,255,0.05))";
+    row.style.cursor = "pointer";
+
+    const swatch = document.createElement("div");
+    swatch.style.width = "10px";
+    swatch.style.height = "10px";
+    swatch.style.borderRadius = "50%";
+    swatch.style.background = item.color || "#60a5fa";
+    swatch.style.flexShrink = "0";
+    row.appendChild(swatch);
+
+    const icon = document.createElement("ha-icon");
+    icon.icon = item.icon || "mdi:help-circle";
+    icon.style.flexShrink = "0";
+    row.appendChild(icon);
+
+    const name = document.createElement("div");
+    name.textContent = this._entityName(item.entity);
+    name.style.flex = "1";
+    name.style.overflow = "hidden";
+    name.style.textOverflow = "ellipsis";
+    name.style.whiteSpace = "nowrap";
+    row.appendChild(name);
+
+    const editIcon = document.createElement("ha-icon");
+    editIcon.icon = "mdi:pencil";
+    editIcon.style.flexShrink = "0";
+    editIcon.style.opacity = "0.6";
+    row.appendChild(editIcon);
+
+    row.addEventListener("click", () => this._openItemDialog(key, index));
+    return row;
+  }
+
+  _openItemDialog(key, index, sectionTitle) {
+    if (this._activeDialog) {
+      this._activeDialog.remove();
+      this._activeDialog = null;
+    }
+
+    const item = (this._config[key] || [])[index] || {};
+    const dialog = document.createElement("ha-dialog");
+    dialog.heading = sectionTitle || "Ger\u00e4t bearbeiten";
+    dialog.open = true;
+    dialog.hass = this._hass;
+
+    const content = document.createElement("div");
+    content.style.display = "flex";
+    content.style.flexDirection = "column";
+    content.style.gap = "16px";
+    content.style.minWidth = "280px";
+    content.style.padding = "4px 0";
 
     const entityPicker = document.createElement("ha-entity-picker");
     entityPicker.hass = this._hass;
     entityPicker.value = item.entity || "";
-    entityPicker.style.flex = "2";
-    entityPicker.style.minWidth = "180px";
+    entityPicker.label = "Entity";
     entityPicker.addEventListener("value-changed", (ev) => {
       this._updateListItem(key, index, { entity: ev.detail.value });
     });
-    row.appendChild(entityPicker);
+    content.appendChild(entityPicker);
 
-    const iconInput = document.createElement("ha-icon-picker");
-    iconInput.hass = this._hass;
-    iconInput.value = item.icon || "";
-    iconInput.style.flex = "1";
-    iconInput.style.minWidth = "140px";
-    iconInput.addEventListener("value-changed", (ev) => {
+    const iconPicker = document.createElement("ha-icon-picker");
+    iconPicker.hass = this._hass;
+    iconPicker.value = item.icon || "";
+    iconPicker.label = "Icon";
+    iconPicker.addEventListener("value-changed", (ev) => {
       this._updateListItem(key, index, { icon: ev.detail.value });
     });
-    row.appendChild(iconInput);
+    content.appendChild(iconPicker);
 
-    const colorPicker = this._colorPickerRow(
-      "",
+    content.appendChild(this._colorPickerRow(
+      "Farbe",
       item.color || "#60a5fa",
       (hex) => this._updateListItem(key, index, { color: hex })
-    );
-    colorPicker.style.flex = "0 0 auto";
-    colorPicker.querySelector("div").style.display = "none";
-    row.appendChild(colorPicker);
+    ));
 
-    const delBtn = document.createElement("ha-icon-button");
-    const delIcon = document.createElement("ha-icon");
-    delIcon.icon = "mdi:delete";
-    delBtn.appendChild(delIcon);
-    delBtn.addEventListener("click", () => {
+    dialog.appendChild(content);
+
+    const deleteBtn = document.createElement("mwc-button");
+    deleteBtn.textContent = "L\u00f6schen";
+    deleteBtn.style.setProperty("--mdc-theme-primary", "var(--error-color, #db4437)");
+    deleteBtn.setAttribute("slot", "secondaryAction");
+    deleteBtn.addEventListener("click", () => {
       const updated = (this._config[key] || []).filter((_, i) => i !== index);
       this._config = { ...this._config, [key]: updated };
       this._fireChanged();
+      dialog.open = false;
       this._render();
     });
-    row.appendChild(delBtn);
+    dialog.appendChild(deleteBtn);
 
-    return row;
+    const doneBtn = document.createElement("mwc-button");
+    doneBtn.textContent = "Fertig";
+    doneBtn.setAttribute("slot", "primaryAction");
+    doneBtn.addEventListener("click", () => { dialog.open = false; });
+    dialog.appendChild(doneBtn);
+
+    dialog.addEventListener("closed", () => {
+      dialog.remove();
+      this._activeDialog = null;
+      this._render();
+    });
+
+    document.body.appendChild(dialog);
+    this._activeDialog = dialog;
   }
 
   _updateListItem(key, index, patch) {
