@@ -652,25 +652,22 @@ class PrismRoomTileEditor extends HTMLElement {
     heading.style.marginBottom = "4px";
     scroller.appendChild(heading);
 
-    const entityPicker = document.createElement("ha-entity-picker");
-    entityPicker.hass = this._hass;
-    entityPicker.value = item.entity || "";
-    entityPicker.label = "Entity";
-    entityPicker.addEventListener("value-changed", (ev) => {
-      this._updateListItem(key, index, { entity: ev.detail.value });
+    // Use the same ha-form + selector mechanism as the "Inhalt" panel above
+    // (confirmed working there) instead of raw <ha-entity-picker>/<ha-icon-picker>
+    // elements, which did not reliably render standalone inside this dialog.
+    const detailForm = document.createElement("ha-form");
+    detailForm.hass = this._hass;
+    detailForm.data = { entity: item.entity || "", icon: item.icon || "" };
+    detailForm.schema = [
+      { name: "entity", selector: { entity: {} } },
+      { name: "icon", selector: { icon: {} } }
+    ];
+    detailForm.computeLabel = (s) => (s.name === "entity" ? "Entity" : "Icon");
+    detailForm.addEventListener("value-changed", (ev) => {
+      this._updateListItem(key, index, ev.detail.value);
       this._refreshList(key);
     });
-    scroller.appendChild(entityPicker);
-
-    const iconPicker = document.createElement("ha-icon-picker");
-    iconPicker.hass = this._hass;
-    iconPicker.value = item.icon || "";
-    iconPicker.label = "Icon";
-    iconPicker.addEventListener("value-changed", (ev) => {
-      this._updateListItem(key, index, { icon: ev.detail.value });
-      this._refreshList(key);
-    });
-    scroller.appendChild(iconPicker);
+    scroller.appendChild(detailForm);
 
     scroller.appendChild(this._colorPickerRow(
       "Farbe",
