@@ -397,6 +397,25 @@ class PrismRoomTileEditor extends HTMLElement {
     return (state && state.attributes.friendly_name) || entityId;
   }
 
+  _panel(header, secondary, expanded, contentBuilder) {
+    const panel = document.createElement("ha-expansion-panel");
+    panel.outlined = true;
+    panel.header = header;
+    if (secondary) panel.secondary = secondary;
+    panel.expanded = !!expanded;
+    panel.style.display = "block";
+
+    const inner = document.createElement("div");
+    inner.style.display = "flex";
+    inner.style.flexDirection = "column";
+    inner.style.gap = "16px";
+    inner.style.padding = "12px 16px 16px";
+    contentBuilder(inner);
+
+    panel.appendChild(inner);
+    return panel;
+  }
+
   _render() {
     if (!this._config) return;
     this.innerHTML = "";
@@ -404,41 +423,55 @@ class PrismRoomTileEditor extends HTMLElement {
     const wrapper = document.createElement("div");
     wrapper.style.display = "flex";
     wrapper.style.flexDirection = "column";
-    wrapper.style.gap = "16px";
+    wrapper.style.gap = "12px";
     wrapper.style.padding = "8px 0";
 
-    wrapper.appendChild(this._colorPickerRow(
-      "Akzentfarbe",
-      this._config.accent_color || "#60a5fa",
-      (hex) => {
-        this._config = { ...this._config, accent_color: hex };
+    // --- Inhalt: Grunddaten der Kachel -----------------------------------
+    wrapper.appendChild(this._panel("Inhalt", "Name, Icon, Haupt-Entity, Navigation", true, (inner) => {
+      inner.appendChild(this._colorPickerRow(
+        "Akzentfarbe",
+        this._config.accent_color || "#60a5fa",
+        (hex) => {
+          this._config = { ...this._config, accent_color: hex };
+          this._fireChanged();
+        }
+      ));
+
+      const form = document.createElement("ha-form");
+      form.hass = this._hass;
+      form.data = this._config;
+      form.schema = this._schema();
+      form.computeLabel = (s) => this._labels(s.name);
+      form.addEventListener("value-changed", (ev) => {
+        this._config = { ...this._config, ...ev.detail.value };
         this._fireChanged();
-      }
+      });
+      this._form = form;
+      inner.appendChild(form);
+    }));
+
+    // --- Ecken-Icons -------------------------------------------------------
+    wrapper.appendChild(this._panel(
+      "Ecken-Icons",
+      "Oben rechts, z.B. Fenster/Pr\u00e4senz",
+      false,
+      (inner) => inner.appendChild(this._renderListEditor("corner_entities", "Ecken-Icons"))
     ));
 
-    const form = document.createElement("ha-form");
-    form.hass = this._hass;
-    form.data = this._config;
-    form.schema = this._schema();
-    form.computeLabel = (s) => this._labels(s.name);
-    form.addEventListener("value-changed", (ev) => {
-      this._config = { ...this._config, ...ev.detail.value };
-      this._fireChanged();
-    });
-    this._form = form;
-    wrapper.appendChild(form);
+    // --- Info-Chips ----------------------------------------------------------
+    wrapper.appendChild(this._panel(
+      "Info-Chips",
+      "Zus\u00e4tzliche Werte, z.B. Verbrauch",
+      false,
+      (inner) => inner.appendChild(this._renderListEditor("info_entities", "Info-Chips"))
+    ));
 
-    wrapper.appendChild(this._renderListEditor(
-      "corner_entities",
-      "Ecken-Icons (oben rechts, z.B. Fenster/Pr\u00e4senz)"
-    ));
-    wrapper.appendChild(this._renderListEditor(
-      "info_entities",
-      "Info-Chips (zus\u00e4tzliche Werte, z.B. Verbrauch)"
-    ));
-    wrapper.appendChild(this._renderListEditor(
-      "entities",
-      "Quick-Toggle-Icons (unten, mittig)"
+    // --- Quick-Toggle-Icons ----------------------------------------------
+    wrapper.appendChild(this._panel(
+      "Quick-Toggle-Icons",
+      "Unten mittig, mit eigenen Tap/Halten/Doppel-Tap-Aktionen",
+      false,
+      (inner) => inner.appendChild(this._renderListEditor("entities", "Quick-Toggle-Icons"))
     ));
 
     this.appendChild(wrapper);
@@ -499,15 +532,8 @@ class PrismRoomTileEditor extends HTMLElement {
   // by other HA cards (e.g. entities/area card row editors).
   _renderListEditor(key, title) {
     const section = document.createElement("div");
-    section.style.border = "1px solid var(--divider-color, #444)";
-    section.style.borderRadius = "8px";
-    section.style.padding = "12px";
-
-    const heading = document.createElement("div");
-    heading.textContent = title;
-    heading.style.fontWeight = "600";
-    heading.style.marginBottom = "8px";
-    section.appendChild(heading);
+    section.style.display = "flex";
+    section.style.flexDirection = "column";
 
     const list = this._config[key] || [];
     const listEl = document.createElement("div");
