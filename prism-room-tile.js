@@ -547,18 +547,36 @@ class PrismRoomTileEditor extends HTMLElement {
     });
     section.appendChild(listEl);
 
+    // Keep a reference so item-dialog changes can refresh just this list,
+    // without rebuilding the whole editor (which would collapse panels
+    // and reset scroll position).
+    this._listContainers = this._listContainers || {};
+    this._listContainers[key] = listEl;
+
     const addBtn = document.createElement("mwc-button");
     addBtn.textContent = "+ Hinzuf\u00fcgen";
     addBtn.addEventListener("click", () => {
       const updated = [...(this._config[key] || []), { entity: "", icon: "mdi:help-circle", color: "#60a5fa" }];
       this._config = { ...this._config, [key]: updated };
       this._fireChanged();
-      this._render();
+      this._refreshList(key);
       this._openItemDialog(key, updated.length - 1, title);
     });
     section.appendChild(addBtn);
 
     return section;
+  }
+
+  // Re-render only the rows of one list (called after add/edit/delete in the
+  // item popup) instead of the whole editor, so expansion-panel state and
+  // scroll position stay untouched.
+  _refreshList(key) {
+    const listEl = this._listContainers && this._listContainers[key];
+    if (!listEl) return;
+    listEl.innerHTML = "";
+    (this._config[key] || []).forEach((item, index) => {
+      listEl.appendChild(this._renderSummaryRow(key, index, item));
+    });
   }
 
   _renderSummaryRow(key, index, item) {
@@ -610,16 +628,29 @@ class PrismRoomTileEditor extends HTMLElement {
 
     const item = (this._config[key] || [])[index] || {};
     const dialog = document.createElement("ha-dialog");
-    dialog.heading = sectionTitle || "Ger\u00e4t bearbeiten";
     dialog.open = true;
     dialog.hass = this._hass;
+    dialog.style.setProperty("--mdc-dialog-max-width", "420px");
 
-    const content = document.createElement("div");
-    content.style.display = "flex";
-    content.style.flexDirection = "column";
-    content.style.gap = "16px";
-    content.style.minWidth = "280px";
-    content.style.padding = "4px 0";
+    // We control our own header + scroll area inside the dialog instead of
+    // relying purely on the dialog's own heading/content slots -- avoids
+    // the top of the content (heading + entity picker) getting scrolled
+    // out of view when the action selectors below it expand the dialog.
+    const scroller = document.createElement("div");
+    scroller.style.display = "flex";
+    scroller.style.flexDirection = "column";
+    scroller.style.gap = "16px";
+    scroller.style.minWidth = "280px";
+    scroller.style.maxHeight = "min(70vh, 640px)";
+    scroller.style.overflowY = "auto";
+    scroller.style.padding = "4px 2px";
+
+    const heading = document.createElement("div");
+    heading.textContent = sectionTitle || "Ger\u00e4t bearbeiten";
+    heading.style.fontSize = "18px";
+    heading.style.fontWeight = "600";
+    heading.style.marginBottom = "4px";
+    scroller.appendChild(heading);
 
     const entityPicker = document.createElement("ha-entity-picker");
     entityPicker.hass = this._hass;
@@ -627,8 +658,9 @@ class PrismRoomTileEditor extends HTMLElement {
     entityPicker.label = "Entity";
     entityPicker.addEventListener("value-changed", (ev) => {
       this._updateListItem(key, index, { entity: ev.detail.value });
+      this._refreshList(key);
     });
-    content.appendChild(entityPicker);
+    scroller.appendChild(entityPicker);
 
     const iconPicker = document.createElement("ha-icon-picker");
     iconPicker.hass = this._hass;
@@ -636,13 +668,14 @@ class PrismRoomTileEditor extends HTMLElement {
     iconPicker.label = "Icon";
     iconPicker.addEventListener("value-changed", (ev) => {
       this._updateListItem(key, index, { icon: ev.detail.value });
+      this._refreshList(key);
     });
-    content.appendChild(iconPicker);
+    scroller.appendChild(iconPicker);
 
-    content.appendChild(this._colorPickerRow(
+    scroller.appendChild(this._colorPickerRow(
       "Farbe",
       item.color || "#60a5fa",
-      (hex) => this._updateListItem(key, index, { color: hex })
+      (hex) => { this._updateListItem(key, index, { color: hex }); this._refreshList(key); }
     ));
 
     // Full action config (tap/hold/double-tap) -- only for the quick-toggle
@@ -652,7 +685,7 @@ class PrismRoomTileEditor extends HTMLElement {
       actionsHeading.textContent = "Aktionen";
       actionsHeading.style.fontWeight = "600";
       actionsHeading.style.marginTop = "4px";
-      content.appendChild(actionsHeading);
+      scroller.appendChild(actionsHeading);
 
       const actionsForm = document.createElement("ha-form");
       actionsForm.hass = this._hass;
@@ -677,10 +710,10 @@ class PrismRoomTileEditor extends HTMLElement {
       actionsForm.addEventListener("value-changed", (ev) => {
         this._updateListItem(key, index, ev.detail.value);
       });
-      content.appendChild(actionsForm);
+      scroller.appendChild(actionsForm);
     }
 
-    dialog.appendChild(content);
+    dialog.appendChild(scroller);
 
     const deleteBtn = document.createElement("mwc-button");
     deleteBtn.textContent = "L\u00f6schen";
@@ -690,8 +723,8 @@ class PrismRoomTileEditor extends HTMLElement {
       const updated = (this._config[key] || []).filter((_, i) => i !== index);
       this._config = { ...this._config, [key]: updated };
       this._fireChanged();
+      this._refreshList(key);
       dialog.open = false;
-      this._render();
     });
     dialog.appendChild(deleteBtn);
 
@@ -704,11 +737,19 @@ class PrismRoomTileEditor extends HTMLElement {
     dialog.addEventListener("closed", () => {
       dialog.remove();
       this._activeDialog = null;
-      this._render();
+      this._refreshList(key);
     });
 
     document.body.appendChild(dialog);
     this._activeDialog = dialog;
+
+    // Guarantee the scroll area starts at the top (heading + entity picker
+    // visible) even if something inside tries to scroll a focused field
+    // into view.
+    requestAnimationFrame(() => {
+      scroller.scrollTop = 0;
+      requestAnimationFrame(() => { scroller.scrollTop = 0; });
+    });
   }
 
   _defaultActionPreview(entityId, kind) {
