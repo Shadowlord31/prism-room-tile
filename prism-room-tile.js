@@ -190,17 +190,103 @@ class PrismRoomTile extends HTMLElement {
       btn.dataset.entity = ent.entity;
       btn.style.setProperty("--btn-color", ent.color || accent);
       btn.innerHTML = `<ha-icon icon="${ent.icon || "mdi:toggle-switch"}"></ha-icon>`;
-      let holdTimer = null;
-      btn.addEventListener("pointerdown", () => {
-        holdTimer = setTimeout(() => { this._moreInfo(ent.entity); holdTimer = null; }, 500);
-      });
-      btn.addEventListener("pointerup", (e) => {
-        e.stopPropagation();
-        if (holdTimer) { clearTimeout(holdTimer); this._toggle(ent.entity); }
-      });
-      btn.addEventListener("pointerleave", () => { if (holdTimer) clearTimeout(holdTimer); });
+      this._bindEntityButtonActions(btn, ent);
       entRow.appendChild(btn);
     });
+  }
+
+  // --- Action handling for the quick-toggle entity row ------------------
+  // Supports full tap / hold / double-tap actions, same action types as
+  // native HA cards: toggle, more-info, navigate, url, call-service /
+  // perform-action, none.
+
+  _defaultTapAction(entityId) {
+    const domain = (entityId || "").split(".")[0];
+    if (["climate", "media_player", "select", "sensor", "binary_sensor"].includes(domain)) {
+      return { action: "more-info" };
+    }
+    return { action: "toggle" };
+  }
+
+  _bindEntityButtonActions(btn, ent) {
+    const entityId = ent.entity;
+    const tapAction = ent.tap_action || this._defaultTapAction(entityId);
+    const holdAction = ent.hold_action || { action: "more-info" };
+    const doubleTapAction = ent.double_tap_action || { action: "none" };
+    const hasDouble = doubleTapAction && doubleTapAction.action && doubleTapAction.action !== "none";
+
+    let holdTimer = null;
+    let holdTriggered = false;
+    let tapTimer = null;
+    let lastTapAt = 0;
+
+    btn.addEventListener("pointerdown", () => {
+      holdTriggered = false;
+      holdTimer = setTimeout(() => {
+        holdTriggered = true;
+        this._handleAction(holdAction, entityId);
+      }, 500);
+    });
+
+    btn.addEventListener("pointerup", (e) => {
+      e.stopPropagation();
+      clearTimeout(holdTimer);
+      if (holdTriggered) return;
+
+      if (hasDouble) {
+        const now = Date.now();
+        if (now - lastTapAt < 300) {
+          clearTimeout(tapTimer);
+          lastTapAt = 0;
+          this._handleAction(doubleTapAction, entityId);
+        } else {
+          lastTapAt = now;
+          tapTimer = setTimeout(() => {
+            this._handleAction(tapAction, entityId);
+          }, 300);
+        }
+      } else {
+        this._handleAction(tapAction, entityId);
+      }
+    });
+
+    btn.addEventListener("pointerleave", () => { clearTimeout(holdTimer); });
+  }
+
+  _handleAction(action, entityId) {
+    if (!action || !this._hass) return;
+    switch (action.action) {
+      case "toggle":
+        this._hass.callService("homeassistant", "toggle", {}, { entity_id: entityId });
+        break;
+      case "more-info":
+        this._moreInfo(action.entity_id || entityId);
+        break;
+      case "navigate":
+        if (action.navigation_path) {
+          window.history.pushState(null, "", action.navigation_path);
+          window.dispatchEvent(new CustomEvent("location-changed", { bubbles: true, composed: true }));
+        }
+        break;
+      case "url":
+        if (action.url_path) {
+          window.open(action.url_path, action.new_tab === false ? "_self" : "_blank");
+        }
+        break;
+      case "call-service":
+      case "perform-action": {
+        const svc = action.service || action.perform_action;
+        if (!svc || svc.indexOf(".") === -1) break;
+        const [domain, service] = svc.split(".");
+        const data = action.data || action.service_data || {};
+        const target = action.target || { entity_id: entityId };
+        this._hass.callService(domain, service, data, target);
+        break;
+      }
+      case "none":
+      default:
+        break;
+    }
   }
 
   _update() {
@@ -533,6 +619,41 @@ class PrismRoomTileEditor extends HTMLElement {
       (hex) => this._updateListItem(key, index, { color: hex })
     ));
 
+    // Full action config (tap/hold/double-tap) -- only for the quick-toggle
+    // entity row, so it behaves like a proper device card per icon.
+    if (key === "entities") {
+      const actionsHeading = document.createElement("div");
+      actionsHeading.textContent = "Aktionen";
+      actionsHeading.style.fontWeight = "600";
+      actionsHeading.style.marginTop = "4px";
+      content.appendChild(actionsHeading);
+
+      const actionsForm = document.createElement("ha-form");
+      actionsForm.hass = this._hass;
+      actionsForm.data = {
+        tap_action: item.tap_action || this._defaultActionPreview(item.entity, "tap"),
+        hold_action: item.hold_action || { action: "more-info" },
+        double_tap_action: item.double_tap_action || { action: "none" }
+      };
+      actionsForm.schema = [
+        { name: "tap_action", selector: { ui_action: {} } },
+        { name: "hold_action", selector: { ui_action: {} } },
+        { name: "double_tap_action", selector: { ui_action: {} } }
+      ];
+      actionsForm.computeLabel = (s) => {
+        const map = {
+          tap_action: "Tap-Aktion",
+          hold_action: "Halten-Aktion",
+          double_tap_action: "Doppel-Tap-Aktion"
+        };
+        return map[s.name] || s.name;
+      };
+      actionsForm.addEventListener("value-changed", (ev) => {
+        this._updateListItem(key, index, ev.detail.value);
+      });
+      content.appendChild(actionsForm);
+    }
+
     dialog.appendChild(content);
 
     const deleteBtn = document.createElement("mwc-button");
@@ -562,6 +683,17 @@ class PrismRoomTileEditor extends HTMLElement {
 
     document.body.appendChild(dialog);
     this._activeDialog = dialog;
+  }
+
+  _defaultActionPreview(entityId, kind) {
+    const domain = (entityId || "").split(".")[0];
+    if (kind === "tap") {
+      if (["climate", "media_player", "select", "sensor", "binary_sensor"].includes(domain)) {
+        return { action: "more-info" };
+      }
+      return { action: "toggle" };
+    }
+    return { action: "none" };
   }
 
   _updateListItem(key, index, patch) {
