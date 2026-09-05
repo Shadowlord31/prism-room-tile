@@ -737,7 +737,7 @@ class PrismRoomTileEditor extends HTMLElement {
       this._refreshList(key);
     });
 
-    document.body.appendChild(dialog);
+    this.appendChild(dialog);
     this._activeDialog = dialog;
 
     // Guarantee the scroll area starts at the top (heading + entity picker
