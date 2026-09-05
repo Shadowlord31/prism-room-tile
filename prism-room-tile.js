@@ -82,7 +82,8 @@ class PrismRoomTile extends HTMLElement {
           overflow: hidden;
           transition: transform .15s ease;
         }
-        .prism-tile:active { transform: scale(0.98); }
+        .prism-tile.pressed { transform: scale(0.98); }
+        .prism-entity-btn:active, .prism-corner-icon:active { transform: scale(0.88); }
         .prism-glow {
           position: absolute; top:-60px; right:-40px; width: 160px; height: 160px;
           background: radial-gradient(circle, ${accent} 0%, transparent 70%);
@@ -154,8 +155,22 @@ class PrismRoomTile extends HTMLElement {
     `;
 
     const tile = this.querySelector(".prism-tile");
+
+    // Manual press-state instead of CSS :active on the tile: :active bubbles
+    // up from child buttons automatically, which made the whole card "press"
+    // whenever a small icon button underneath was tapped. We only add the
+    // pressed look when the press actually started on the tile background.
+    const isChildControl = (target) => !!(target.closest(".prism-entity-btn") || target.closest(".prism-corner-icon"));
+
+    tile.addEventListener("pointerdown", (e) => {
+      if (isChildControl(e.target)) return;
+      tile.classList.add("pressed");
+    });
+    tile.addEventListener("pointerup", () => tile.classList.remove("pressed"));
+    tile.addEventListener("pointerleave", () => tile.classList.remove("pressed"));
+
     tile.addEventListener("click", (e) => {
-      if (e.target.closest(".prism-entity-btn") || e.target.closest(".prism-corner-icon")) return;
+      if (isChildControl(e.target)) return;
       this._navigate();
     });
 
