@@ -73,9 +73,11 @@ class PrismRoomTile extends HTMLElement {
           position: relative;
           border-radius: 20px;
           padding: 16px 18px;
-          background: linear-gradient(135deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02));
-          backdrop-filter: blur(18px);
-          -webkit-backdrop-filter: blur(18px);
+          background:
+            linear-gradient(135deg, rgba(255,255,255,0.09), rgba(255,255,255,0.02)),
+            rgba(18, 20, 28, 0.62);
+          backdrop-filter: blur(22px) saturate(150%);
+          -webkit-backdrop-filter: blur(22px) saturate(150%);
           border: 1px solid rgba(255,255,255,0.09);
           box-shadow: 0 8px 24px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.05);
           cursor: pointer;
@@ -156,10 +158,6 @@ class PrismRoomTile extends HTMLElement {
 
     const tile = this.querySelector(".prism-tile");
 
-    // Manual press-state instead of CSS :active on the tile: :active bubbles
-    // up from child buttons automatically, which made the whole card "press"
-    // whenever a small icon button underneath was tapped. We only add the
-    // pressed look when the press actually started on the tile background.
     const isChildControl = (target) => !!(target.closest(".prism-entity-btn") || target.closest(".prism-corner-icon"));
 
     tile.addEventListener("pointerdown", (e) => {
@@ -209,11 +207,6 @@ class PrismRoomTile extends HTMLElement {
       entRow.appendChild(btn);
     });
   }
-
-  // --- Action handling for the quick-toggle entity row ------------------
-  // Supports full tap / hold / double-tap actions, same action types as
-  // native HA cards: toggle, more-info, navigate, url, call-service /
-  // perform-action, none.
 
   _defaultTapAction(entityId) {
     const domain = (entityId || "").split(".")[0];
@@ -357,6 +350,10 @@ class PrismRoomTile extends HTMLElement {
 
 class PrismRoomTileEditor extends HTMLElement {
   setConfig(config) {
+    const incoming = JSON.stringify(config || {});
+    if (this._config && incoming === JSON.stringify(this._config)) {
+      return;
+    }
     this._config = { ...config };
     this._render();
   }
@@ -441,7 +438,6 @@ class PrismRoomTileEditor extends HTMLElement {
     wrapper.style.gap = "12px";
     wrapper.style.padding = "8px 0";
 
-    // --- Inhalt: Grunddaten der Kachel -----------------------------------
     wrapper.appendChild(this._panel("Inhalt", "Name, Icon, Haupt-Entity, Navigation", true, (inner) => {
       inner.appendChild(this._colorPickerRow(
         "Akzentfarbe",
@@ -465,7 +461,6 @@ class PrismRoomTileEditor extends HTMLElement {
       inner.appendChild(form);
     }));
 
-    // --- Ecken-Icons -------------------------------------------------------
     wrapper.appendChild(this._panel(
       "Ecken-Icons",
       "Oben rechts, z.B. Fenster/Pr\u00e4senz",
@@ -473,7 +468,6 @@ class PrismRoomTileEditor extends HTMLElement {
       (inner) => inner.appendChild(this._renderListEditor("corner_entities", "Ecken-Icons"))
     ));
 
-    // --- Info-Chips ----------------------------------------------------------
     wrapper.appendChild(this._panel(
       "Info-Chips",
       "Zus\u00e4tzliche Werte, z.B. Verbrauch",
@@ -481,7 +475,6 @@ class PrismRoomTileEditor extends HTMLElement {
       (inner) => inner.appendChild(this._renderListEditor("info_entities", "Info-Chips"))
     ));
 
-    // --- Quick-Toggle-Icons ----------------------------------------------
     wrapper.appendChild(this._panel(
       "Quick-Toggle-Icons",
       "Unten mittig, mit eigenen Tap/Halten/Doppel-Tap-Aktionen",
@@ -542,9 +535,6 @@ class PrismRoomTileEditor extends HTMLElement {
     return "#60a5fa";
   }
 
-  // Compact list: one summary row per item (icon + name), click opens an
-  // ha-dialog popup to edit that single item -- matches the pattern used
-  // by other HA cards (e.g. entities/area card row editors).
   _renderListEditor(key, title) {
     const section = document.createElement("div");
     section.style.display = "flex";
@@ -562,9 +552,6 @@ class PrismRoomTileEditor extends HTMLElement {
     });
     section.appendChild(listEl);
 
-    // Keep a reference so item-dialog changes can refresh just this list,
-    // without rebuilding the whole editor (which would collapse panels
-    // and reset scroll position).
     this._listContainers = this._listContainers || {};
     this._listContainers[key] = listEl;
 
@@ -582,9 +569,6 @@ class PrismRoomTileEditor extends HTMLElement {
     return section;
   }
 
-  // Re-render only the rows of one list (called after add/edit/delete in the
-  // item popup) instead of the whole editor, so expansion-panel state and
-  // scroll position stay untouched.
   _refreshList(key) {
     const listEl = this._listContainers && this._listContainers[key];
     if (!listEl) return;
@@ -647,10 +631,6 @@ class PrismRoomTileEditor extends HTMLElement {
     dialog.hass = this._hass;
     dialog.style.setProperty("--mdc-dialog-max-width", "420px");
 
-    // We control our own header + scroll area inside the dialog instead of
-    // relying purely on the dialog's own heading/content slots -- avoids
-    // the top of the content (heading + entity picker) getting scrolled
-    // out of view when the action selectors below it expand the dialog.
     const scroller = document.createElement("div");
     scroller.style.display = "flex";
     scroller.style.flexDirection = "column";
@@ -667,9 +647,6 @@ class PrismRoomTileEditor extends HTMLElement {
     heading.style.marginBottom = "4px";
     scroller.appendChild(heading);
 
-    // Use the same ha-form + selector mechanism as the "Inhalt" panel above
-    // (confirmed working there) instead of raw <ha-entity-picker>/<ha-icon-picker>
-    // elements, which did not reliably render standalone inside this dialog.
     const detailForm = document.createElement("ha-form");
     detailForm.hass = this._hass;
     detailForm.data = { entity: item.entity || "", icon: item.icon || "" };
@@ -690,8 +667,6 @@ class PrismRoomTileEditor extends HTMLElement {
       (hex) => { this._updateListItem(key, index, { color: hex }); this._refreshList(key); }
     ));
 
-    // Full action config (tap/hold/double-tap) -- only for the quick-toggle
-    // entity row, so it behaves like a proper device card per icon.
     if (key === "entities") {
       const actionsHeading = document.createElement("div");
       actionsHeading.textContent = "Aktionen";
@@ -755,9 +730,6 @@ class PrismRoomTileEditor extends HTMLElement {
     this.appendChild(dialog);
     this._activeDialog = dialog;
 
-    // Guarantee the scroll area starts at the top (heading + entity picker
-    // visible) even if something inside tries to scroll a focused field
-    // into view.
     requestAnimationFrame(() => {
       scroller.scrollTop = 0;
       requestAnimationFrame(() => { scroller.scrollTop = 0; });
